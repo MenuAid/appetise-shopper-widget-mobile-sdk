@@ -1,5 +1,7 @@
 .DS_Store
 # iOS
+.build/
+.swiftpm/
 ios/.build/
 ios/.swiftpm/
 *.xcuserstate

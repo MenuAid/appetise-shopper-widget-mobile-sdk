@@ -1,55 +1,121 @@
-# Appetise Shopper — mobile SDKs
+# Appetise Shopper mobile SDKs
 
-The shopper widget in partner apps, as a native sheet around the web widget. Design and decisions:
-`appetise-shopper-widget/.ai/specs/mobile-sdk.md`. The bridge protocol is defined in that repo
-(`src/native-host/protocol.ts`) and published as `m/v1/bridge-protocol.v1.schema.json`.
+The Appetise shopper widget in your iOS and Android apps. Pass a shopping list or a recipe, and
+your users price it at their supermarket and send it to their cart, in a native sheet over your
+app.
 
-| Directory | What | Status |
+| Platform | Package | Requires |
 | --- | --- | --- |
-| `ios/` | Swift package `AppetiseShopper` (iOS 15+) | Core working on the simulator |
-| `android/sdk` | Kotlin library `io.appetise.shopper` (API 24+) | Core working on the emulator |
-| `android/example`, `ios/Example` | A recipe screen with a Shop button gated on readiness | Spike-level |
-| `react-native/`, `flutter/` | Wrappers over the two cores (D1) | Not started |
+| iOS | Swift package `AppetiseShopper` | iOS 15+ |
+| Android | `io.appetise:shopper` on Maven Central | API 24+ |
 
-## API
+React Native and Flutter wrappers are planned.
+
+> **Pre-release.** The first version will be `0.1.0`. Until then the install lines below don't
+> resolve.
+
+## Before you start
+
+You need an Appetise partner ID. Appetise also has to add your app to your partner account: give
+us your iOS bundle ID and Android package name, exactly as they appear in your build settings. The
+widget refuses to load in any app that isn't on that list.
+
+## Install
+
+**iOS.** In Xcode, choose File › Add Package Dependencies, enter
+`https://github.com/MenuAid/appetise-shopper-widget-mobile-sdk` and pick the `AppetiseShopper`
+library. Or, in `Package.swift`:
 
 ```swift
-Appetise.configure(AppetiseConfiguration(partner: "9b2f6c1e-…"))
-Appetise.preload()                                  // when a screen with the button appears
-let ready = Appetise.onReadinessChange { ready in button.isHidden = !ready }   // keep the handle
-Appetise.open([.raw("100g butter"), .raw("2 eggs")], externalRef: "list-42")
-Appetise.openRecipe(.params(name: "Pasta", ingredients: [...], externalRef: "post-123"))
-let opened = Appetise.on("embed_opened") { payload in ... }
-Appetise.close()
+.package(url: "https://github.com/MenuAid/appetise-shopper-widget-mobile-sdk", from: "0.1.0")
 ```
 
-Kotlin is the same, with an `Activity` passed to `open` and a `Context` to `configure`.
+**Android.** With `mavenCentral()` in your repositories:
 
-## Running the examples locally
+```kotlin
+implementation("io.appetise:shopper:0.1.0")
+```
 
-Both load the hosted page from the widget's dev server and call a local appetise-web. The partner
-must allow the app: locally `local-dev` allows `localhost` by domain, so any app ID works.
+## Use
 
-1. In `appetise-shopper-widget`: `npm run dev -- --port 5199 --strictPort`.
-2. **iOS**: boot a simulator, trust Herd's CA in it once
-   (`xcrun simctl keychain booted add-root-cert ~/Library/Application\ Support/Herd/config/valet/CA/LaravelValetCASelfSigned.pem`),
-   then:
-   ```bash
-   APPETISE_HOSTED_PAGE=http://localhost:5199/m/v1/index.html APPETISE_API_BASE=https://appetise.test \
-     ios/Example/run-simulator.sh
-   ```
-   It builds with `swiftc`, so it needs no Xcode project. `APPETISE_AUTO_OPEN=1` opens the sheet
-   once ready, since a simulator can't be tapped from a script.
-3. **Android**: the emulator can't resolve `*.test` or trust Herd's certificate, so put an HTTP
-   proxy to `https://appetise.test` on host port 8787, then:
-   ```bash
-   cd android && ./gradlew :example:installDebug
-   adb reverse tcp:5199 tcp:5199 && adb reverse tcp:8787 tcp:8787
-   adb shell am start -n com.appetise.tester/io.appetise.example.MainActivity \
-     --es hostedPage http://localhost:5199/m/v1/index.html --es apiBase http://localhost:8787 --ez autoOpen true
-   ```
+### 1. Configure once, at launch
 
-## Tests
+```swift
+Appetise.configure(AppetiseConfiguration(partner: "your-partner-id"))
+```
 
-- Android: `cd android && ./gradlew :sdk:testDebugUnitTest`.
-- iOS: none yet. `xcodebuild` on this package needs the iOS platform matching the installed SDK.
+```kotlin
+Appetise.configure(applicationContext, AppetiseConfiguration(partner = "your-partner-id"))
+```
+
+The country is worked out from the device's timezone. Pass `countryCode` (`"NZ"` or `"AU"`) to
+set it yourself.
+
+### 2. Preload, and show your button only when the widget is ready
+
+Call `preload()` when a screen with a Shop button appears. Keep the button hidden until the widget
+says it's ready, so it never does nothing when tapped.
+
+```swift
+Appetise.preload()
+readiness = Appetise.onReadinessChange { ready in shopButton.isHidden = !ready }
+```
+
+```kotlin
+Appetise.preload()
+readiness = Appetise.onReadinessChange { ready -> shopButton.isVisible = ready }
+```
+
+Keep the subscription for as long as the screen is showing. On iOS it cancels itself when
+released; on Android, call `readiness.cancel()` when the screen is destroyed. `isReady` and
+`notReadyReason` give the current state at any time.
+
+### 3. Open a shopping list or a recipe
+
+```swift
+Appetise.open([.raw("100g butter"), .named("eggs", quantity: 3)], externalRef: "list-42")
+
+Appetise.openRecipe(.params(
+    name: "Creamy mushroom pasta",
+    ingredients: [.raw("250g pasta"), .raw("300g mushrooms")],
+    externalRef: "recipe-123",
+    servings: 4
+))
+```
+
+```kotlin
+Appetise.open(activity, listOf(AppetiseIngredient.Raw("100g butter")), externalRef = "list-42")
+
+Appetise.openRecipe(activity, AppetiseRecipe.Params(
+    name = "Creamy mushroom pasta",
+    ingredients = listOf(AppetiseIngredient.Raw("250g pasta"), AppetiseIngredient.Raw("300g mushrooms")),
+    externalRef = "recipe-123",
+    servings = 4,
+))
+```
+
+`externalRef` is your own ID for the list or recipe, so the baskets it leads to can be reported
+back against it. A recipe can also be plain text: `.text(...)` on iOS, `AppetiseRecipe.Text` on
+Android.
+
+The sheet closes itself when the user is done. `Appetise.close()` closes it from your code.
+
+### Events
+
+`Appetise.on("embed_opened") { payload in ... }` listens for the widget's events, such as
+`embed_initialised` and `embed_opened`. It returns a subscription, like `onReadinessChange`.
+
+### Debugging
+
+`AppetiseConfiguration(partner: ..., debug: true)` logs the SDK's lifecycle to the console
+(Logcat on Android) and makes the WebView inspectable from Safari or Chrome.
+
+## Privacy
+
+The iOS package ships a privacy manifest (`PrivacyInfo.xcprivacy`). A full list of the data the
+SDK collects, in App Store privacy label and Play Data safety terms, will be published before
+1.0.
+
+## License
+
+Apache 2.0. See [LICENSE](LICENSE).
